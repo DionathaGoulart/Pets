@@ -200,15 +200,15 @@ def google_auth(request):
             email_address.verified = True
             email_address.save()
         
-        # OPCIONAL: Guarda os tokens OAuth (descomente se precisar acessar APIs do Google depois)
-        # SocialToken.objects.update_or_create(
-        #     account=social_account,
-        #     defaults={
-        #         'token': access_token,
-        #         'token_secret': refresh_token,
-        #         'expires_at': timezone.now() + timedelta(seconds=expires_in)
-        #     }
-        # )
+        # Guarda os tokens OAuth (descomente se precisar acessar APIs do Google depois)
+        SocialToken.objects.update_or_create(
+            account=social_account,
+            defaults={
+                'token': access_token,
+                'token_secret': refresh_token,
+                'expires_at': timezone.now() + timedelta(seconds=expires_in)
+            }
+        )
         
         # Gera tokens JWT
         from rest_framework_simplejwt.tokens import RefreshToken
