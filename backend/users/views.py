@@ -3,9 +3,11 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import get_user_model
-from django.conf import settings
+from django.utils import timezone
+from datetime import timedelta
+from allauth.account.models import EmailAddress
+from allauth.socialaccount.models import SocialAccount, SocialToken
 import requests
-import os
 from decouple import config
 from .serializers import UserSerializer
 
@@ -56,6 +58,7 @@ def dashboard(request):
 def google_auth(request):
     """
     Endpoint para autenticação via Google OAuth
+    Cria/atualiza usuário e registra a conta social
     """
     try:
         code = request.data.get('code')
@@ -87,6 +90,8 @@ def google_auth(request):
         
         token_json = token_response.json()
         access_token = token_json.get('access_token')
+        refresh_token = token_json.get('refresh_token', '')  # Pode não vir sempre
+        expires_in = token_json.get('expires_in', 3600)
         
         if not access_token:
             return Response(
@@ -109,6 +114,7 @@ def google_auth(request):
         
         user_info = user_response.json()
         email = user_info.get('email')
+        google_id = user_info.get('id')
         name = user_info.get('name', '')
         first_name = user_info.get('given_name', '')
         last_name = user_info.get('family_name', '')
@@ -119,34 +125,90 @@ def google_auth(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        if not google_id:
+            return Response(
+                {'error': 'ID do Google não fornecido'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         User = get_user_model()
         
-        # Tenta encontrar ou criar o usuário
-        try:
-            user = User.objects.get(email=email)
+        # Verifica se já existe conta Google pelo UID (ID único)
+        social_account = SocialAccount.objects.filter(
+            provider='google',
+            uid=google_id
+        ).first()
+        
+        if social_account:
+            # Usuário já fez login com Google antes
+            user = social_account.user
             # Atualiza informações do usuário se necessário
             if first_name:
                 user.first_name = first_name
             if last_name:
                 user.last_name = last_name
             user.save()
-        except User.DoesNotExist:
-            # Cria novo usuário
-            username = email.split('@')[0]  # Usa a parte antes do @ como username
-            # Garante que o username seja único
-            counter = 1
-            original_username = username
-            while User.objects.filter(username=username).exists():
-                username = f"{original_username}{counter}"
-                counter += 1
             
-            user = User.objects.create_user(
-                username=username,
-                email=email,
-                first_name=first_name,
-                last_name=last_name,
-                password=None  # Usuário criado via Google não tem senha
+            # Atualiza extra_data com informações mais recentes
+            social_account.extra_data = user_info
+            social_account.save()
+            
+        else:
+            # Verifica se existe usuário com esse email
+            try:
+                user = User.objects.get(email=email)
+                # Email existe, mas não tem conta Google vinculada
+                # Vamos vincular o Google a essa conta existente
+            except User.DoesNotExist:
+                # Cria novo usuário
+                username = email.split('@')[0]
+                # Garante que o username seja único
+                counter = 1
+                original_username = username
+                while User.objects.filter(username=username).exists():
+                    username = f"{original_username}{counter}"
+                    counter += 1
+                
+                user = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    first_name=first_name,
+                    last_name=last_name,
+                )
+            
+            # Cria o SocialAccount
+            social_account = SocialAccount.objects.create(
+                user=user,
+                provider='google',
+                uid=google_id,
+                extra_data=user_info
             )
+        
+        # Gerencia EmailAddress (marca como verificado)
+        email_address, email_created = EmailAddress.objects.get_or_create(
+            user=user,
+            email__iexact=email,
+            defaults={
+                'email': email,
+                'verified': True,
+                'primary': True,
+            }
+        )
+        
+        # Se o email já existia mas não estava verificado, verifica agora
+        if not email_created and not email_address.verified:
+            email_address.verified = True
+            email_address.save()
+        
+        # OPCIONAL: Guarda os tokens OAuth (descomente se precisar acessar APIs do Google depois)
+        # SocialToken.objects.update_or_create(
+        #     account=social_account,
+        #     defaults={
+        #         'token': access_token,
+        #         'token_secret': refresh_token,
+        #         'expires_at': timezone.now() + timedelta(seconds=expires_in)
+        #     }
+        # )
         
         # Gera tokens JWT
         from rest_framework_simplejwt.tokens import RefreshToken

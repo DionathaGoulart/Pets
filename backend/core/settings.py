@@ -9,11 +9,9 @@ from datetime import timedelta
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-this-in-production')
-
-# SECURITY WARNING: don't run with debug turned on in production!
+SECRET_KEY = config('SECRET_KEY')
 DEBUG = config('DEBUG', default=True, cast=bool)
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*', cast=Csv())
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
@@ -28,7 +26,6 @@ INSTALLED_APPS = [
     
     # Third party apps
     'rest_framework',
-    'rest_framework.authtoken',
     'rest_framework_simplejwt',
     'corsheaders',
     'dj_rest_auth',
@@ -125,6 +122,16 @@ AUTHENTICATION_BACKENDS = (
 )
 
 # ============================================
+# CORS - Preparado para múltiplos sites
+# ============================================
+CORS_ALLOWED_ORIGINS = config(
+    'CORS_ALLOWED_ORIGINS',
+    default='http://localhost:3000',
+    cast=Csv()
+)
+CORS_ALLOW_CREDENTIALS = True
+
+# ============================================
 # REST FRAMEWORK CONFIGURATION
 # ============================================
 REST_FRAMEWORK = {
@@ -155,6 +162,7 @@ REST_AUTH = {
     'USE_JWT': True,
     'JWT_AUTH_HTTPONLY': False,  # Para permitir que o React acesse o token
     'JWT_AUTH_COOKIE': None,
+    'TOKEN_MODEL': None, # Desabilita DRF Token
     'USER_DETAILS_SERIALIZER': 'users.serializers.UserSerializer',
     'REGISTER_SERIALIZER': 'users.serializers.CustomRegisterSerializer',
 }
@@ -164,22 +172,12 @@ REST_AUTH = {
 # ============================================
 ACCOUNT_LOGIN_METHODS = {'username', 'email'} 
 ACCOUNT_SIGNUP_FIELDS = ['email*', 'username*', 'password1*', 'password2*']
-ACCOUNT_EMAIL_VERIFICATION = 'optional'  # ou 'mandatory' se quiser verificação obrigatória
-ACCOUNT_UNIQUE_EMAIL = True  # Garante que cada email só pode ser usado uma vez
+ACCOUNT_EMAIL_VERIFICATION = 'optional'
+ACCOUNT_UNIQUE_EMAIL = True
 SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_EMAIL_VERIFICATION = 'none'
 SOCIALACCOUNT_EMAIL_REQUIRED = True
 SOCIALACCOUNT_QUERY_EMAIL = True
-
-# ============================================
-# CORS CONFIGURATION
-# ============================================
-CORS_ALLOWED_ORIGINS = config(
-    'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:3000,http://localhost:5173',
-    cast=Csv()
-)
-
-CORS_ALLOW_CREDENTIALS = True
 
 # ============================================
 # EMAIL CONFIGURATION
