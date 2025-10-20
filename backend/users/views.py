@@ -4,12 +4,16 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.conf import settings
 from datetime import timedelta
 from allauth.account.models import EmailAddress
-from allauth.socialaccount.models import SocialAccount, SocialToken
+from allauth.socialaccount.models import SocialAccount
 import requests
+import logging
 from decouple import config
 from .serializers import UserSerializer
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
@@ -17,6 +21,8 @@ from .serializers import UserSerializer
 def user_profile(request):
     """
     Retorna os dados do usuário autenticado
+    
+    GET /api/profile/
     """
     serializer = UserSerializer(request.user)
     return Response(serializer.data)
@@ -27,6 +33,8 @@ def user_profile(request):
 def update_profile(request):
     """
     Atualiza os dados do usuário autenticado
+    
+    PUT/PATCH /api/profile/update/
     """
     serializer = UserSerializer(request.user, data=request.data, partial=True)
     if serializer.is_valid():
@@ -40,14 +48,14 @@ def update_profile(request):
 def dashboard(request):
     """
     Endpoint do dashboard - retorna dados do usuário e outras informações
+    
+    GET /api/dashboard/
     """
     user_data = UserSerializer(request.user).data
     
-    # Aqui você pode adicionar mais dados que quer retornar
     data = {
         'user': user_data,
         'message': f'Bem-vindo ao dashboard, {request.user.username}!',
-        # Adicione outros dados que você queira retornar
     }
     
     return Response(data)
@@ -57,8 +65,22 @@ def dashboard(request):
 @permission_classes([AllowAny])
 def google_auth(request):
     """
-    Endpoint para autenticação via Google OAuth
-    Cria/atualiza usuário e registra a conta social
+    Autenticação via Google OAuth
+    
+    POST /api/auth/google/callback/
+    
+    Request Body:
+    {
+        "code": "4/0AY0e-g7...",
+        "redirect_uri": "http://localhost:3000/auth/callback"
+    }
+    
+    Response (200 OK):
+    {
+        "access": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+        "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+        "user": {...}
+    }
     """
     try:
         code = request.data.get('code')
@@ -80,18 +102,17 @@ def google_auth(request):
             'redirect_uri': redirect_uri,
         }
         
-        token_response = requests.post(token_url, data=token_data)
+        token_response = requests.post(token_url, data=token_data, timeout=10)
         
         if token_response.status_code != 200:
+            logger.warning(f'Falha ao obter token do Google: {token_response.text}')
             return Response(
-                {'error': 'Falha ao obter token do Google'}, 
+                {'error': 'Código de autorização inválido ou expirado'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         token_json = token_response.json()
         access_token = token_json.get('access_token')
-        refresh_token = token_json.get('refresh_token', '')  # Pode não vir sempre
-        expires_in = token_json.get('expires_in', 3600)
         
         if not access_token:
             return Response(
@@ -103,10 +124,12 @@ def google_auth(request):
         user_info_url = 'https://www.googleapis.com/oauth2/v2/userinfo'
         user_response = requests.get(
             user_info_url, 
-            headers={'Authorization': f'Bearer {access_token}'}
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=10
         )
         
         if user_response.status_code != 200:
+            logger.warning(f'Falha ao obter informações do usuário: {user_response.text}')
             return Response(
                 {'error': 'Falha ao obter informações do usuário'}, 
                 status=status.HTTP_400_BAD_REQUEST
@@ -115,41 +138,34 @@ def google_auth(request):
         user_info = user_response.json()
         email = user_info.get('email')
         google_id = user_info.get('id')
-        name = user_info.get('name', '')
         first_name = user_info.get('given_name', '')
         last_name = user_info.get('family_name', '')
         
-        if not email:
+        if not email or not google_id:
             return Response(
-                {'error': 'Email não fornecido pelo Google'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if not google_id:
-            return Response(
-                {'error': 'ID do Google não fornecido'}, 
+                {'error': 'Informações incompletas recebidas do Google'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         User = get_user_model()
         
-        # Verifica se já existe conta Google pelo UID (ID único)
+        # Verifica se já existe conta Google pelo UID
         social_account = SocialAccount.objects.filter(
             provider='google',
             uid=google_id
         ).first()
         
         if social_account:
-            # Usuário já fez login com Google antes
+            # Usuário já existe
             user = social_account.user
-            # Atualiza informações do usuário se necessário
+            # Atualiza informações
             if first_name:
                 user.first_name = first_name
             if last_name:
                 user.last_name = last_name
             user.save()
             
-            # Atualiza extra_data com informações mais recentes
+            # Atualiza extra_data
             social_account.extra_data = user_info
             social_account.save()
             
@@ -157,12 +173,9 @@ def google_auth(request):
             # Verifica se existe usuário com esse email
             try:
                 user = User.objects.get(email=email)
-                # Email existe, mas não tem conta Google vinculada
-                # Vamos vincular o Google a essa conta existente
             except User.DoesNotExist:
                 # Cria novo usuário
                 username = email.split('@')[0]
-                # Garante que o username seja único
                 counter = 1
                 original_username = username
                 while User.objects.filter(username=username).exists():
@@ -184,7 +197,7 @@ def google_auth(request):
                 extra_data=user_info
             )
         
-        # Gerencia EmailAddress (marca como verificado)
+        # Gerencia EmailAddress
         email_address, email_created = EmailAddress.objects.get_or_create(
             user=user,
             email__iexact=email,
@@ -195,20 +208,9 @@ def google_auth(request):
             }
         )
         
-        # Se o email já existia mas não estava verificado, verifica agora
         if not email_created and not email_address.verified:
             email_address.verified = True
             email_address.save()
-        
-        # Guarda os tokens OAuth
-        SocialToken.objects.update_or_create(
-            account=social_account,
-            defaults={
-                'token': access_token,
-                'token_secret': refresh_token,
-                'expires_at': timezone.now() + timedelta(seconds=expires_in)
-            }
-        )
         
         # Gera tokens JWT
         from rest_framework_simplejwt.tokens import RefreshToken
@@ -219,9 +221,24 @@ def google_auth(request):
             'refresh': str(refresh),
             'user': UserSerializer(user).data
         })
-        
-    except Exception as e:
+    
+    except requests.RequestException as e:
+        logger.error(f'Erro de comunicação com Google: {str(e)}', exc_info=True)
         return Response(
-            {'error': f'Erro interno: {str(e)}'}, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            {'error': 'Falha ao comunicar com o Google. Tente novamente.'}, 
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
         )
+    
+    except Exception as e:
+        logger.error(f'Erro no Google Auth: {str(e)}', exc_info=True)
+        
+        if not settings.DEBUG:
+            return Response(
+                {'error': 'Ocorreu um erro. Tente novamente mais tarde.'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        else:
+            return Response(
+                {'error': f'Erro: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

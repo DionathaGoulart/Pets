@@ -15,8 +15,7 @@ class UserSerializer(serializers.ModelSerializer):
 
 class CustomRegisterSerializer(RegisterSerializer):
     """
-    Serializer customizado para registro que verifica se o email
-    já está sendo usado (incluindo contas sociais)
+    Serializer customizado para registro que valida email e username
     """
     first_name = serializers.CharField(required=False, allow_blank=True)
     last_name = serializers.CharField(required=False, allow_blank=True)
@@ -24,22 +23,17 @@ class CustomRegisterSerializer(RegisterSerializer):
     def validate_email(self, email):
         """
         Valida se o email já está sendo usado
-        Verifica tanto em User quanto em EmailAddress (para contas sociais)
         """
         email = email.lower()
         
-        # Verifica se já existe um usuário com esse email
-        if CustomUser.objects.filter(email__iexact=email).exists():
-            raise serializers.ValidationError(
-                "Este email já está sendo usado. Se você criou uma conta com Google, "
-                "faça login com o Google."
-            )
+        # Verifica User e EmailAddress (contas sociais)
+        user_exists = CustomUser.objects.filter(email__iexact=email).exists()
+        social_exists = EmailAddress.objects.filter(email__iexact=email).exists()
         
-        # Verifica se o email está registrado via conta social
-        if EmailAddress.objects.filter(email__iexact=email).exists():
+        if user_exists or social_exists:
             raise serializers.ValidationError(
-                "Este email já está associado a uma conta social (Google). "
-                "Por favor, faça login com o Google."
+                "Este email já está sendo usado. "
+                "Se você já tem uma conta, faça login."
             )
         
         return email
