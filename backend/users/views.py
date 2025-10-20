@@ -200,7 +200,7 @@ def google_auth(request):
             email_address.verified = True
             email_address.save()
         
-        # Guarda os tokens OAuth (descomente se precisar acessar APIs do Google depois)
+        # Guarda os tokens OAuth
         SocialToken.objects.update_or_create(
             account=social_account,
             defaults={
