@@ -13,6 +13,9 @@ def setup_social_auth(sender, **kwargs):
     # Só executa para o app 'users' (evita executar múltiplas vezes)
     if sender.name != 'users':
         return
+
+    if kwargs.get('plan'):  # Skip during dry-run
+            return
     
     print("\n🔧 Configurando Site e Google OAuth...")
     

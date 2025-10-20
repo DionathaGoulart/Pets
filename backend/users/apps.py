@@ -6,5 +6,5 @@ class UsersConfig(AppConfig):
     name = 'users'
 
     def ready(self):
-            """Importa os signals quando o app estiver pronto"""
-            import users.signals 
+        """Importa os signals quando o app estiver pronto"""
+        import users.signals
